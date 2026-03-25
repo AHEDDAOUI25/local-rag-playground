@@ -35,24 +35,39 @@ def chunk_by_sentences(sentences, chunk_size=2, overlap=1):
     return chunks
 
 
-def build_index(text, chunk_size=2, overlap=1):
+def build_index(text, source_name, chunk_size=2, overlap=1):
     sentences = split_into_sentences(text)
     chunks = chunk_by_sentences(sentences, chunk_size=chunk_size, overlap=overlap)
     embeddings = model.encode(chunks)
-    return chunks, embeddings
+
+    records = []
+    for i, chunk in enumerate(chunks):
+        records.append({
+            "chunk_id": i,
+            "source": source_name,
+            "chunk": chunk,
+            "embedding": embeddings[i]
+        })
+    return records
 
 
-def search(query, chunks, embeddings, top_k=2):
+def search(query, records, top_k=2):
     query_embedding = model.encode([query])
-    scores = cosine_similarity(query_embedding, embeddings)[0]
+
+    chunk_embeddings = np.array([r["embedding"] for r in records])
+    scores = cosine_similarity(query_embedding, chunk_embeddings)[0]
+
     top_indices = np.argsort(scores)[::-1][:top_k]
 
     results = []
     for idx in top_indices:
         results.append({
             "score": float(scores[idx]),
-            "chunk": chunks[idx]
+            "chunk_id": records[idx]["chunk_id"],
+            "source": records[idx]["source"],
+            "chunk": records[idx]["chunk"]
         })
+
     return results
 
 
@@ -60,11 +75,18 @@ def build_grounded_answer(query, results):
     return generate_with_ollama(query, results)
 
 
-def generate_with_ollama(query, results, model="llama3.2:3b"):
-    context = "\n".join([r["chunk"] for r in results])
+def generate_with_ollama(query, results, model="llama3.2:1b"):
+    context = "\n\n".join(
+        [f"[Source: {r['source']}, Chunk: {r['chunk_id']}]\n{r['chunk']}" for r in results]
+    )
 
     prompt = f"""
-You are answering only from the provided context.
+Answer the user's question using only the context below.
+
+If the answer is present in the context, answer directly and confidently.
+Do not say the information is insufficient unless the context truly does not contain the answer.
+After the answer, include a short Sources section listing the source and chunk IDs you relied on.
+Keep the answer concise and clear.
 
 Question:
 {query}
@@ -72,10 +94,7 @@ Question:
 Context:
 {context}
 
-Instructions:
-- Answer clearly and directly.
-- Use only the context.
-- If the context is insufficient, say so.
+Answer:
 """
 
     response = requests.post(
@@ -103,11 +122,10 @@ def main():
     filepath = "knowledge_base.txt"
     document = load_text_file(filepath)
 
-    chunks, embeddings = build_index(document)
-
+    records = build_index(document, source_name=filepath)
     print("\nRAG Retrieval App (type 'exit' to quit)\n")
     print(f"Loaded file: {filepath}")
-    print(f"Number of chunks: {len(chunks)}\n")
+    print(f"Number of chunks: {len(records)}\n")
 
     while True:
         query = input("Ask a question: ").strip()
@@ -119,11 +137,12 @@ def main():
             print("Please enter a question.\n")
             continue
 
-        results = search(query, chunks, embeddings, top_k=2)
+        results = search(query, records, top_k=2)
 
         print("\nTop matches:\n")
         for r in results:
             print(f"Score: {r['score']:.4f}")
+            print(f"Source: {r['source']} | Chunk ID: {r['chunk_id']}")
             print(r["chunk"])
             print()
 
