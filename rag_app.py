@@ -66,6 +66,11 @@ def build_index(text, source_name, chunk_size=2, overlap=1):
     return records
 
 
+
+
+
+#old search 
+""""
 def search(query, records, top_k=2):
     query_embedding = model.encode([query])
 
@@ -84,13 +89,44 @@ def search(query, records, top_k=2):
         })
 
     return results
- 
+""" 
+#new search that filters and sorts with a higher threshold to meet query relevance
+def search(query, records, top_k=3, min_score=0.35):
+    query_embedding = model.encode([query])
+
+    chunk_embeddings = np.array([r["embedding"] for r in records])
+    scores = cosine_similarity(query_embedding, chunk_embeddings)[0]
+
+    ranked_indices = np.argsort(scores)[::-1]
+
+    results = []
+    for idx in ranked_indices:
+        score = float(scores[idx])
+
+        if score < min_score:
+            continue
+
+        results.append({
+            "score": score,
+            "chunk_id": records[idx]["chunk_id"],
+            "source": records[idx]["source"],
+            "chunk": records[idx]["chunk"]
+        })
+
+        if len(results) == top_k:
+            break
+
+    return results
+
+
 
 def build_grounded_answer(query, results):
     return generate_with_ollama(query, results)
 
-
 def generate_with_ollama(query, results, model="llama3.2:1b"):
+    if not results:
+        return "No strong matching context was found for that question."
+
     context = "\n\n".join(
         [f"[Source: {r['source']}, Chunk: {r['chunk_id']}]\n{r['chunk']}" for r in results]
     )
@@ -125,8 +161,6 @@ Answer:
     response.raise_for_status()
     data = response.json()
     return data["response"]
-
-
 
 
 #first main that runs one txt file for the RAG system
@@ -191,6 +225,13 @@ def main():
             continue
 
         results = search(query, all_records, top_k=3)
+        if not results:
+            print("\nNo strong matches found.\n")
+            print("=" * 60)
+            print("No strong matching context was found for that question.")
+            print("=" * 60)
+            print()
+            continue
 
         print("\nTop matches:\n")
         for r in results:
