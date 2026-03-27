@@ -103,17 +103,31 @@ def generate_with_ollama(prompt, model="llama3.2:1b"):
     data = response.json()
     return data["response"]
 
+def decide_tool(query):
+    prompt = f"""
+You are a routing controller for an Applied AI assistant.
 
-def should_use_retrieval(query):
-    retrieval_keywords = [
-        "what is", "explain", "how does", "how do",
-        "compare", "difference", "framework", "rag",
-        "onelake", "fabric", "azure", "semantic kernel",
-        "langchain", "power bi", "machine learning"
-    ]
+Your job is to decide whether the user question should use:
+- RETRIEVE -> if the question likely needs information from the local document knowledge base
+- DIRECT -> if the question can be answered directly without retrieval
 
-    lowered = query.lower()
-    return any(keyword in lowered for keyword in retrieval_keywords)
+Rules:
+- Reply with only one word: RETRIEVE or DIRECT
+- Use RETRIEVE for questions about topics likely covered in the local docs, such as:
+  Microsoft Fabric, OneLake, RAG, Azure ML, Semantic Kernel, LangChain, Power BI, AI agents
+- Use DIRECT for broad conversational or motivational questions that do not require the docs
+
+Question:
+{query}
+
+Decision:
+"""
+
+    decision = generate_with_ollama(prompt).strip().upper()
+
+    if "RETRIEVE" in decision:
+        return "RETRIEVE"
+    return "DIRECT"
 
 
 def answer_with_retrieval(query, records):
@@ -185,10 +199,10 @@ def main():
             print("Please enter a question.\n")
             continue
 
-        use_retrieval = should_use_retrieval(query)
+        decision = decide_tool(query)
 
         print("\nAgent decision:")
-        if use_retrieval:
+        if decision == "RETRIEVE":
             print("-> Using retrieval tool\n")
             answer = answer_with_retrieval(query, all_records)
         else:
