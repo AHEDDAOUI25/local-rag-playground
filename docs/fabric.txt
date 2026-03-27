@@ -1,0 +1,5 @@
+Microsoft Fabric is a unified analytics platform that brings together data engineering, data integration, data warehousing, data science, real-time analytics, and business intelligence.
+
+OneLake is the unified data lake for Microsoft Fabric. It allows teams to store data once and use it across multiple analytics experiences.
+
+Power BI is used for dashboards, reporting, and business intelligence.

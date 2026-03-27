@@ -1,0 +1,5 @@
+Azure Machine Learning helps teams train, deploy, and manage machine learning models.
+
+It supports experiment tracking, model management, and endpoint deployment.
+
+Azure DevOps supports CI/CD pipelines and deployment workflows for software and machine learning systems.

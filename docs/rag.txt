@@ -1,0 +1,3 @@
+RAG stands for Retrieval-Augmented Generation. It improves question answering by retrieving relevant external information before generating a response.
+
+Vector databases store embeddings, which are numerical representations of meaning. They help systems search by semantic similarity instead of exact keyword matching.

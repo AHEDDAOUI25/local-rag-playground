@@ -3,6 +3,8 @@ from sklearn.metrics.pairwise import cosine_similarity
 import numpy as np
 import re
 import requests
+import os
+
 
 model = SentenceTransformer("all-MiniLM-L6-v2")
 
@@ -10,6 +12,19 @@ model = SentenceTransformer("all-MiniLM-L6-v2")
 def load_text_file(filepath):
     with open(filepath, "r", encoding="utf-8") as f:
         return f.read()
+    
+
+def load_all_text_files(folder_path):
+    documents = []
+    for filename in os.listdir(folder_path):
+        if filename.endswith(".txt"):
+            filepath = os.path.join(folder_path, filename)
+            with open(filepath, "r", encoding="utf-8") as f:
+                documents.append({
+                    "source": filename,
+                    "text": f.read()
+                })
+    return documents
 
 
 def split_into_sentences(text):
@@ -69,7 +84,7 @@ def search(query, records, top_k=2):
         })
 
     return results
-
+ 
 
 def build_grounded_answer(query, results):
     return generate_with_ollama(query, results)
@@ -114,9 +129,8 @@ Answer:
 
 
 
-
-
-
+#first main that runs one txt file for the RAG system
+"""""
 
 def main():
     filepath = "knowledge_base.txt"
@@ -150,6 +164,46 @@ def main():
         print(build_grounded_answer(query, results))
         print("=" * 60)
         print()
+"""""
+def main():
+    folder_path = "docs"
+    documents = load_all_text_files(folder_path)
+
+    all_records = []
+
+    for doc in documents:
+        records = build_index(doc["text"], source_name=doc["source"])
+        all_records.extend(records)
+
+    print("\nLocal RAG App (type 'exit' to quit)\n")
+    print(f"Loaded folder: {folder_path}")
+    print(f"Files loaded: {len(documents)}")
+    print(f"Total chunks: {len(all_records)}\n")
+
+    while True:
+        query = input("Ask a question: ").strip()
+
+        if query.lower() == "exit":
+            break
+
+        if not query:
+            print("Please enter a question.\n")
+            continue
+
+        results = search(query, all_records, top_k=3)
+
+        print("\nTop matches:\n")
+        for r in results:
+            print(f"Score: {r['score']:.4f}")
+            print(f"Source: {r['source']} | Chunk ID: {r['chunk_id']}")
+            print(r["chunk"])
+            print()
+
+        print("=" * 60)
+        print(generate_with_ollama(query, results))
+        print("=" * 60)
+        print()
+
 
 
 if __name__ == "__main__":

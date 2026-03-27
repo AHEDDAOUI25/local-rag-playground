@@ -1,0 +1,3 @@
+Semantic Kernel is a Microsoft framework for building AI agents. It helps connect LLMs with tools, plugins, planners, and memory.
+
+LangChain is another framework often used to build RAG applications, chains, and agents.
