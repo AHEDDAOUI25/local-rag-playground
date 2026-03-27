@@ -102,7 +102,6 @@ def generate_with_ollama(prompt, model="llama3.2:1b"):
     response.raise_for_status()
     data = response.json()
     return data["response"]
-
 def decide_tool(query):
     prompt = f"""
 You are a routing controller for an Applied AI assistant.
@@ -111,13 +110,15 @@ Decide which tool should handle the user's request.
 
 Available tools:
 - RETRIEVE -> use when the user is asking for a factual answer from the local document knowledge base
-- SUMMARIZE -> use when the user is asking for a summary of one or more concepts, documents, or topics from the local knowledge base
+- SUMMARIZE -> use when the user is asking for a summary or overview of one or more topics from the local knowledge base
+- COMPARE -> use when the user is asking for differences, similarities, or a comparison between concepts from the local knowledge base
 - DIRECT -> use when the user is asking for a broad conversational, motivational, or general explanation that does not require the local docs
 
 Rules:
-- Reply with only one word: RETRIEVE, SUMMARIZE, or DIRECT
-- Use RETRIEVE for factual questions about topics likely covered in the local docs
-- Use SUMMARIZE when the user explicitly asks to summarize, give an overview, or briefly explain multiple related ideas from the docs
+- Reply with only one word: RETRIEVE, SUMMARIZE, COMPARE, or DIRECT
+- Use COMPARE when the user says things like compare, difference, similar, versus, vs
+- Use SUMMARIZE when the user asks for a summary or overview
+- Use RETRIEVE for factual lookups from the local docs
 - Use DIRECT for general questions that do not need the docs
 
 Question:
@@ -128,6 +129,8 @@ Decision:
 
     decision = generate_with_ollama(prompt).strip().upper()
 
+    if "COMPARE" in decision:
+        return "COMPARE"
     if "SUMMARIZE" in decision:
         return "SUMMARIZE"
     if "RETRIEVE" in decision:
@@ -198,6 +201,40 @@ Summary:
     return generate_with_ollama(prompt)
 
 
+def compare_with_retrieval(query, records):
+    results = search(query, records, top_k=5, min_score=0.25)
+
+    if not results:
+        return "No strong matching context was found to compare those topics."
+
+    context = "\n\n".join(
+        [f"[Source: {r['source']}, Chunk: {r['chunk_id']}]\n{r['chunk']}" for r in results]
+    )
+
+    prompt = f"""
+You are an Applied AI knowledge assistant.
+
+Your task is to compare the concepts requested by the user using only the provided context.
+
+Instructions:
+- Clearly explain the main differences and/or similarities.
+- Keep the answer structured and concise.
+- Use only the provided context.
+- Do not invent information.
+- End with a short Sources section listing the source file and chunk IDs used.
+
+User request:
+{query}
+
+Context:
+{context}
+
+Comparison:
+"""
+
+    return generate_with_ollama(prompt)
+
+
 def answer_directly(query):
     prompt = f"""
 You are an Applied AI learning assistant.
@@ -236,9 +273,8 @@ def main():
         if not query:
             print("Please enter a question.\n")
             continue
-
+        
         decision = decide_tool(query)
-
         print("\nAgent decision:")
         if decision == "RETRIEVE":
             print("-> Using retrieval tool\n")
@@ -246,10 +282,12 @@ def main():
         elif decision == "SUMMARIZE":
             print("-> Using summarization tool\n")
             answer = summarize_with_retrieval(query, all_records)
+        elif decision == "COMPARE":
+            print("-> Using compare tool\n")
+            answer = compare_with_retrieval(query, all_records)
         else:
             print("-> Answering directly\n")
             answer = answer_directly(query)
-
         print("=" * 60)
         print(answer)
         print("=" * 60)
