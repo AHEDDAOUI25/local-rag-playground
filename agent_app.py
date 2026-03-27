@@ -107,15 +107,18 @@ def decide_tool(query):
     prompt = f"""
 You are a routing controller for an Applied AI assistant.
 
-Your job is to decide whether the user question should use:
-- RETRIEVE -> if the question likely needs information from the local document knowledge base
-- DIRECT -> if the question can be answered directly without retrieval
+Decide which tool should handle the user's request.
+
+Available tools:
+- RETRIEVE -> use when the user is asking for a factual answer from the local document knowledge base
+- SUMMARIZE -> use when the user is asking for a summary of one or more concepts, documents, or topics from the local knowledge base
+- DIRECT -> use when the user is asking for a broad conversational, motivational, or general explanation that does not require the local docs
 
 Rules:
-- Reply with only one word: RETRIEVE or DIRECT
-- Use RETRIEVE for questions about topics likely covered in the local docs, such as:
-  Microsoft Fabric, OneLake, RAG, Azure ML, Semantic Kernel, LangChain, Power BI, AI agents
-- Use DIRECT for broad conversational or motivational questions that do not require the docs
+- Reply with only one word: RETRIEVE, SUMMARIZE, or DIRECT
+- Use RETRIEVE for factual questions about topics likely covered in the local docs
+- Use SUMMARIZE when the user explicitly asks to summarize, give an overview, or briefly explain multiple related ideas from the docs
+- Use DIRECT for general questions that do not need the docs
 
 Question:
 {query}
@@ -125,6 +128,8 @@ Decision:
 
     decision = generate_with_ollama(prompt).strip().upper()
 
+    if "SUMMARIZE" in decision:
+        return "SUMMARIZE"
     if "RETRIEVE" in decision:
         return "RETRIEVE"
     return "DIRECT"
@@ -155,6 +160,39 @@ Context:
 {context}
 
 Answer:
+"""
+
+    return generate_with_ollama(prompt)
+
+
+def summarize_with_retrieval(query, records):
+    results = search(query, records, top_k=4, min_score=0.30)
+
+    if not results:
+        return "No strong matching context was found to summarize."
+
+    context = "\n\n".join(
+        [f"[Source: {r['source']}, Chunk: {r['chunk_id']}]\n{r['chunk']}" for r in results]
+    )
+
+    prompt = f"""
+You are an Applied AI knowledge assistant.
+
+Your task is to summarize the relevant information from the provided context.
+
+Instructions:
+- Write a concise, clear summary.
+- Use only the provided context.
+- Do not invent information.
+- End with a short Sources section listing the source file and chunk IDs used.
+
+User request:
+{query}
+
+Context:
+{context}
+
+Summary:
 """
 
     return generate_with_ollama(prompt)
@@ -205,6 +243,9 @@ def main():
         if decision == "RETRIEVE":
             print("-> Using retrieval tool\n")
             answer = answer_with_retrieval(query, all_records)
+        elif decision == "SUMMARIZE":
+            print("-> Using summarization tool\n")
+            answer = summarize_with_retrieval(query, all_records)
         else:
             print("-> Answering directly\n")
             answer = answer_directly(query)
