@@ -6,6 +6,23 @@ import re
 import os
 
 embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
+#history management functions
+def format_history(history, max_turns=4):
+    recent = history[-max_turns:]
+    lines = []
+
+    for turn in recent:
+        lines.append(f"User: {turn['user']}")
+        lines.append(f"Agent: {turn['agent']}")
+
+    return "\n".join(lines)
+
+
+def add_to_history(history, user_message, agent_message):
+    history.append({
+        "user": user_message,
+        "agent": agent_message
+    })
 
 
 def load_all_text_files(folder_path):
@@ -102,7 +119,8 @@ def generate_with_ollama(prompt, model="llama3.2:1b"):
     response.raise_for_status()
     data = response.json()
     return data["response"]
-def decide_tool(query):
+
+def decide_tool(query, history_text):
     prompt = f"""
 You are a routing controller for an Applied AI assistant.
 
@@ -114,9 +132,13 @@ Available tools:
 - COMPARE -> use when the user is asking for differences, similarities, or a comparison between concepts from the local knowledge base
 - DIRECT -> use when the user is asking for a broad conversational, motivational, or general explanation that does not require the local docs
 
+Conversation history:
+{history_text}
+
 Rules:
 - Reply with only one word: RETRIEVE, SUMMARIZE, COMPARE, or DIRECT
-- Use COMPARE when the user says things like compare, difference, similar, versus, vs
+- Use conversation history to resolve references like "it", "that", "those", or "compare it"
+- Use COMPARE when the user asks for a comparison, difference, similarity, versus, or vs
 - Use SUMMARIZE when the user asks for a summary or overview
 - Use RETRIEVE for factual lookups from the local docs
 - Use DIRECT for general questions that do not need the docs
@@ -138,7 +160,7 @@ Decision:
     return "DIRECT"
 
 
-def answer_with_retrieval(query, records):
+def answer_with_retrieval(query, records, history_text):
     results = search(query, records, top_k=3, min_score=0.35)
 
     if not results:
@@ -151,10 +173,14 @@ def answer_with_retrieval(query, records):
     prompt = f"""
 You are an Applied AI knowledge assistant.
 
-Answer the user's question using only the provided context.
-If the answer is present in the context, answer directly and clearly.
+Use the conversation history and the provided context to answer the user's question.
+If the current question refers to something like "it" or "that", use the history to resolve the reference.
+Answer using only the provided context for factual claims.
 Do not invent information.
 After the answer, include a short Sources section listing the source file and chunk IDs used.
+
+Conversation history:
+{history_text}
 
 Question:
 {query}
@@ -168,40 +194,7 @@ Answer:
     return generate_with_ollama(prompt)
 
 
-def summarize_with_retrieval(query, records):
-    results = search(query, records, top_k=4, min_score=0.30)
-
-    if not results:
-        return "No strong matching context was found to summarize."
-
-    context = "\n\n".join(
-        [f"[Source: {r['source']}, Chunk: {r['chunk_id']}]\n{r['chunk']}" for r in results]
-    )
-
-    prompt = f"""
-You are an Applied AI knowledge assistant.
-
-Your task is to summarize the relevant information from the provided context.
-
-Instructions:
-- Write a concise, clear summary.
-- Use only the provided context.
-- Do not invent information.
-- End with a short Sources section listing the source file and chunk IDs used.
-
-User request:
-{query}
-
-Context:
-{context}
-
-Summary:
-"""
-
-    return generate_with_ollama(prompt)
-
-
-def compare_with_retrieval(query, records):
+def compare_with_retrieval(query, records, history_text):
     results = search(query, records, top_k=5, min_score=0.25)
 
     if not results:
@@ -214,14 +207,18 @@ def compare_with_retrieval(query, records):
     prompt = f"""
 You are an Applied AI knowledge assistant.
 
-Your task is to compare the concepts requested by the user using only the provided context.
+Use the conversation history and provided context to compare the concepts requested by the user.
+If the current question refers to something like "it" or "that", use the history to resolve the reference.
 
 Instructions:
-- Clearly explain the main differences and/or similarities.
-- Keep the answer structured and concise.
-- Use only the provided context.
-- Do not invent information.
-- End with a short Sources section listing the source file and chunk IDs used.
+- Clearly explain the main differences and/or similarities
+- Keep the answer structured and concise
+- Use only the provided context
+- Do not invent information
+- End with a short Sources section listing the source file and chunk IDs used
+
+Conversation history:
+{history_text}
 
 User request:
 {query}
@@ -235,12 +232,55 @@ Comparison:
     return generate_with_ollama(prompt)
 
 
-def answer_directly(query):
+def summarize_with_retrieval(query, records, history_text):
+    results = search(query, records, top_k=4, min_score=0.30)
+
+    if not results:
+        return "No strong matching context was found to summarize."
+
+    context = "\n\n".join(
+        [f"[Source: {r['source']}, Chunk: {r['chunk_id']}]\n{r['chunk']}" for r in results]
+    )
+
+    prompt = f"""
+You are an Applied AI knowledge assistant.
+
+Use the conversation history and provided context to summarize the relevant information.
+If the current question refers to something like "it" or "that", use the history to resolve the reference.
+
+Instructions:
+- Write a concise, clear summary
+- Use only the provided context
+- Do not invent information
+- End with a short Sources section listing the source file and chunk IDs used
+
+Conversation history:
+{history_text}
+
+User request:
+{query}
+
+Context:
+{context}
+
+Summary:
+"""
+
+    return generate_with_ollama(prompt)
+
+
+def answer_directly(query, history_text):
     prompt = f"""
 You are an Applied AI learning assistant.
 
-Answer the following question clearly and concisely.
+Use the conversation history to understand the user's latest question.
+If the question refers to something earlier, use the history to resolve it.
+
+Answer clearly and concisely.
 If the question is broad, give a practical explanation.
+
+Conversation history:
+{history_text}
 
 Question:
 {query}
@@ -249,15 +289,17 @@ Answer:
 """
     return generate_with_ollama(prompt)
 
-
 def main():
     folder_path = "docs"
     documents = load_all_text_files(folder_path)
 
     all_records = []
+
     for doc in documents:
         records = build_index(doc["text"], source_name=doc["source"])
         all_records.extend(records)
+
+    history = []  # memory conversation history
 
     print("\nApplied AI Agent (type 'exit' to quit)\n")
     print(f"Loaded folder: {folder_path}")
@@ -273,25 +315,35 @@ def main():
         if not query:
             print("Please enter a question.\n")
             continue
-        
-        decision = decide_tool(query)
+
+        history_txt = format_history(history)
+
+        print("\n--- MEMORY / HISTORY PASSED TO MODEL ---")
+        print(history_txt if history_txt else "[empty]")
+        print("--- END HISTORY ---\n")
+
+        decision = decide_tool(query, history_txt)
+
         print("\nAgent decision:")
         if decision == "RETRIEVE":
             print("-> Using retrieval tool\n")
-            answer = answer_with_retrieval(query, all_records)
+            answer = answer_with_retrieval(query, all_records, history_txt)
         elif decision == "SUMMARIZE":
             print("-> Using summarization tool\n")
-            answer = summarize_with_retrieval(query, all_records)
+            answer = summarize_with_retrieval(query, all_records, history_txt)
         elif decision == "COMPARE":
             print("-> Using compare tool\n")
-            answer = compare_with_retrieval(query, all_records)
+            answer = compare_with_retrieval(query, all_records, history_txt)
         else:
             print("-> Answering directly\n")
-            answer = answer_directly(query)
+            answer = answer_directly(query, history_txt)
+
         print("=" * 60)
         print(answer)
         print("=" * 60)
         print()
+
+        add_to_history(history, query, answer)
 
 
 if __name__ == "__main__":
