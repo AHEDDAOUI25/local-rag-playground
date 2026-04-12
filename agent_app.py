@@ -5,7 +5,47 @@ import requests
 import re
 import os
 
+
 embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
+
+
+def rewrite_query_with_history(query, history_text):
+    prompt = f"""
+You are a query rewriting assistant for an Applied AI agent.
+
+Your job is to rewrite the user's latest question into a clear, explicit standalone query
+using the conversation history when needed.
+
+Rules:
+- Resolve references like "it", "that", "those", "both", "them"
+- Keep the rewritten query concise
+- Do not answer the question
+- Only rewrite it
+- If the query is already clear, return it unchanged
+
+Conversation history:
+{history_text}
+
+Latest user query:
+{query}
+
+Rewritten query:
+"""
+
+    rewritten = generate_with_ollama(prompt).strip()
+    # 🚨 SAFETY CHECK
+    if (
+        not rewritten
+        or len(rewritten) < 5
+        or "can't help" in rewritten.lower()
+        or "cannot" in rewritten.lower()
+    ):
+        return query  # fallback to original
+
+    return rewritten
+
+
+
 #history management functions
 def format_history(history, max_turns=4):
     recent = history[-max_turns:]
@@ -106,7 +146,7 @@ def search(query, records, top_k=3, min_score=0.35):
     return results
 
 
-def generate_with_ollama(prompt, model="llama3.2:1b"):
+def generate_with_ollama(prompt, model="gemma4:e4b"):
     response = requests.post(
         "http://localhost:11434/api/generate",
         json={
@@ -159,12 +199,12 @@ Decision:
         return "RETRIEVE"
     return "DIRECT"
 
-
 def answer_with_retrieval(query, records, history_text):
-    results = search(query, records, top_k=3, min_score=0.35)
+    rewritten_query = rewrite_query_with_history(query, history_text)
+    results = search(rewritten_query, records, top_k=3, min_score=0.35)
 
     if not results:
-        return "No strong matching context was found for that question."
+        return f"Rewritten query: {rewritten_query}\n\nNo strong matching context was found for that question."
 
     context = "\n\n".join(
         [f"[Source: {r['source']}, Chunk: {r['chunk_id']}]\n{r['chunk']}" for r in results]
@@ -174,16 +214,19 @@ def answer_with_retrieval(query, records, history_text):
 You are an Applied AI knowledge assistant.
 
 Use the conversation history and the provided context to answer the user's question.
-If the current question refers to something like "it" or "that", use the history to resolve the reference.
+If the current question refers to something like "it" or "that", use the rewritten query to resolve the reference.
 Answer using only the provided context for factual claims.
 Do not invent information.
 After the answer, include a short Sources section listing the source file and chunk IDs used.
 
+Original question:
+{query}
+
+Rewritten query:
+{rewritten_query}
+
 Conversation history:
 {history_text}
-
-Question:
-{query}
 
 Context:
 {context}
@@ -191,14 +234,15 @@ Context:
 Answer:
 """
 
-    return generate_with_ollama(prompt)
-
+    answer = generate_with_ollama(prompt)
+    return f"Rewritten query: {rewritten_query}\n\n{answer}"
 
 def compare_with_retrieval(query, records, history_text):
-    results = search(query, records, top_k=5, min_score=0.25)
+    rewritten_query = rewrite_query_with_history(query, history_text)
+    results = search(rewritten_query, records, top_k=5, min_score=0.25)
 
     if not results:
-        return "No strong matching context was found to compare those topics."
+        return f"Rewritten query: {rewritten_query}\n\nNo strong matching context was found to compare those topics."
 
     context = "\n\n".join(
         [f"[Source: {r['source']}, Chunk: {r['chunk_id']}]\n{r['chunk']}" for r in results]
@@ -208,7 +252,6 @@ def compare_with_retrieval(query, records, history_text):
 You are an Applied AI knowledge assistant.
 
 Use the conversation history and provided context to compare the concepts requested by the user.
-If the current question refers to something like "it" or "that", use the history to resolve the reference.
 
 Instructions:
 - Clearly explain the main differences and/or similarities
@@ -217,11 +260,14 @@ Instructions:
 - Do not invent information
 - End with a short Sources section listing the source file and chunk IDs used
 
+Original user request:
+{query}
+
+Rewritten query:
+{rewritten_query}
+
 Conversation history:
 {history_text}
-
-User request:
-{query}
 
 Context:
 {context}
@@ -229,14 +275,16 @@ Context:
 Comparison:
 """
 
-    return generate_with_ollama(prompt)
+    answer = generate_with_ollama(prompt)
+    return f"Rewritten query: {rewritten_query}\n\n{answer}"
 
 
 def summarize_with_retrieval(query, records, history_text):
-    results = search(query, records, top_k=4, min_score=0.30)
+    rewritten_query = rewrite_query_with_history(query, history_text)
+    results = search(rewritten_query, records, top_k=4, min_score=0.30)
 
     if not results:
-        return "No strong matching context was found to summarize."
+        return f"Rewritten query: {rewritten_query}\n\nNo strong matching context was found to summarize."
 
     context = "\n\n".join(
         [f"[Source: {r['source']}, Chunk: {r['chunk_id']}]\n{r['chunk']}" for r in results]
@@ -246,7 +294,6 @@ def summarize_with_retrieval(query, records, history_text):
 You are an Applied AI knowledge assistant.
 
 Use the conversation history and provided context to summarize the relevant information.
-If the current question refers to something like "it" or "that", use the history to resolve the reference.
 
 Instructions:
 - Write a concise, clear summary
@@ -254,11 +301,14 @@ Instructions:
 - Do not invent information
 - End with a short Sources section listing the source file and chunk IDs used
 
+Original user request:
+{query}
+
+Rewritten query:
+{rewritten_query}
+
 Conversation history:
 {history_text}
-
-User request:
-{query}
 
 Context:
 {context}
@@ -266,7 +316,8 @@ Context:
 Summary:
 """
 
-    return generate_with_ollama(prompt)
+    answer = generate_with_ollama(prompt)
+    return f"Rewritten query: {rewritten_query}\n\n{answer}"
 
 
 def answer_directly(query, history_text):
